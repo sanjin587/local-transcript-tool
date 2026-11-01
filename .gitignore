@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+models/
+输出/
+压缩验收/
+*日志.txt
+.env
+.env.*
+*.wav
+*.mp4
+*.m4a
