@@ -5,7 +5,7 @@ Windows 桌面工具，将本地视频或音频转换为中文逐字稿，也支
 ## 功能
 
 - 批量中文转写：纯文字 TXT、带时间戳 TXT、SRT、JSON 和增量 JSONL。
-- medium / small / base 模型；检测到 NVIDIA CUDA 时优先 GPU，否则使用 CPU。
+- medium / small / base 模型；界面可选“优先显卡”或“优先 CPU”；显卡检测或模型加载失败时自动回退 CPU。
 - 提取单声道 M4A，超长音频自动分段并检查每个文件大小。
 - 压缩 MP4：优先 NVENC，失败时回退 CPU 两遍编码，检查体积与时长。
 - 另存结果，保留原文件；支持停止处理。
@@ -29,11 +29,13 @@ python -m venv .venv
 $env:TRANSCRIPT_MODEL_CACHE = 'E:\AI-Models\hub'
 ```
 
-CPU 无需安装 CUDA；GPU 转写需安装与 CTranslate2 匹配的 NVIDIA 驱动、CUDA 12 和 cuDNN 9。GPU 库加载失败时会报告错误，当前仅在未检测到 GPU 时自动选择 CPU。依赖说明见 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)。
+CPU 无需安装 CUDA；GPU 转写需安装与 CTranslate2 匹配的 NVIDIA 驱动、CUDA 12 和 cuDNN 9。显卡模型加载失败时自动改用 CPU；推理过程中的其他错误仍会报告失败。依赖说明见 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)。
 
 ## 使用
 
-双击 `打开逐字稿工具.cmd` 或运行 `python app.py`。选择“生成逐字稿”，选择音视频后点击“开始处理”。默认功能是“提取小体积音频”，请按需切换。结果保存在工具目录的 `输出` 文件夹。
+双击 `打开逐字稿工具.cmd` 或运行 `python app.py`。选择“生成逐字稿”，选择音视频后点击“开始处理”。默认功能是“生成逐字稿”，请按需切换。结果保存在工具目录的 `输出` 文件夹。
+
+所有选中文件会显示在可滚动列表中，每个文件独立显示进度条和状态。批量顺序处理；转写进度按已返回片段在原音频中的位置估算，加载模型与读取音频时显示等待动画，最后写出结果后才显示 100%。压缩显示当前编码阶段进度，CPU 两遍编码、分段或重试时会重新计进度。停止和失败不会显示为完成。
 
 命令行转写：
 
@@ -44,6 +46,8 @@ CPU 无需安装 CUDA；GPU 转写需安装与 CTranslate2 匹配的 NVIDIA 驱�
 转写只读取本地模型，不上传媒体，不调用云端模型 API。下载脚本需要联网。结果中包含输入文件的本地路径；分享生成结果前请自行检查。压缩按十进制 MB 限制每个输出文件；视频只保留主画面和第一条音轨，不保留独立字幕轨、额外音轨和章节。
 
 ## 验证与限制
+
+运行 `python -m unittest test_progress -v` 检查逐文件界面进度、设备选择、显卡加载失败回退，以及批量失败和取消状态。设备测试使用模拟模型；不替代真实模型推理验收。
 
 ```powershell
 .\.venv\Scripts\python.exe verify_compression.py
