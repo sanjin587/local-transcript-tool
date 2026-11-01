@@ -16,6 +16,21 @@ class DropTests(unittest.TestCase):
     def drop(self, paths):
         payload = self.ui.root.tk.call('format', '%s', self.ui.root.tk.call('list', *map(str, paths)))
         return self.ui.on_drop(SimpleNamespace(data=payload))
+    def test_drop_zone_click_opens_file_picker(self):
+        from unittest.mock import patch
+        video = self.folder / '点击选择.mp4'; video.touch()
+        self.ui.root.deiconify(); self.ui.root.update()
+        with patch('app.filedialog.askopenfilenames', return_value=(str(video),)) as picker:
+            self.ui.drop_zone.event_generate('<Button-1>', x=10, y=10)
+            self.ui.root.update()
+            picker.assert_called_once()
+        self.assertEqual(self.ui.files, [str(video)])
+        self.ui.busy = True
+        with patch('app.filedialog.askopenfilenames') as picker:
+            self.ui.drop_zone.event_generate('<Button-1>', x=10, y=10)
+            self.ui.root.update()
+            picker.assert_not_called()
+
     def test_native_extension_registered(self):
         self.assertTrue(self.ui.dnd_enabled)
         self.assertTrue(self.ui.root.tk.call('package', 'present', 'tkdnd'))
