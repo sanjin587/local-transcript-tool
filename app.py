@@ -97,6 +97,7 @@ class App:
         self.events = queue.Queue(); self.files = []; self.cancel = threading.Event(); self.busy = False
         self.file_progress = []
         self.root.protocol('WM_DELETE_WINDOW', self.close)
+        self.root.bind('<Destroy>', self.on_destroy)
         ttk.Label(self.root, text='本地视频工具：提取音频、压缩视频、生成逐字稿', font=('Microsoft YaHei', 15)).pack(pady=15)
         ttk.Label(self.root, text='无需上传 · 不消耗对话 token · 另存结果，保留原文件').pack()
         ttk.Label(self.root, text='转写设备可选；视频编码优先 NVIDIA 显卡，音频编码使用 CPU。').pack()
@@ -121,6 +122,13 @@ class App:
         self.run = ttk.Button(bar, text='开始处理', command=self.start); self.run.pack(side='left', padx=5)
         self.stop = ttk.Button(bar, text='停止', command=self.cancel.set, state='disabled'); self.stop.pack(side='left', padx=5)
         ttk.Button(bar, text='打开输出文件夹', command=self.open_output).pack(side='left', padx=5)
+        output_row = ttk.Frame(self.root); output_row.pack(fill='x', padx=15, pady=(0, 8))
+        ttk.Label(output_row, text='输出文件夹：').pack(side='left')
+        self.output_dir = tk.StringVar(value=str(BASE / '输出'))
+        self.output_entry = ttk.Entry(output_row, textvariable=self.output_dir)
+        self.output_entry.pack(side='left', fill='x', expand=True, padx=6)
+        self.output_choose = ttk.Button(output_row, text='选择文件夹…', command=self.select_output)
+        self.output_choose.pack(side='left')
         ttk.Label(self.root, text='音频适合口播保存；超长音频自动分段。压缩视频保留完整时长，目标越小，画质越低。').pack()
         ttk.Label(self.root, text='逐字稿模型：medium 优先质量 / small 优先速度 / base 粗稿；MB设置仅用于音频和视频压缩。').pack()
         self.drop_zone = ttk.Label(self.root,
@@ -143,7 +151,7 @@ class App:
         for target in (self.root, self.drop_zone, self.progress_canvas):
             target.drop_target_register(DND_FILES)
             target.dnd_bind('<<Drop>>', self.on_drop)
-        self.root.after(200, self.poll)
+        self.poll_job = self.root.after(200, self.poll)
     def on_drop(self, event):
         if self.busy:
             self.events.put('正在处理，请等本批完成或停止后再拖入文件。')
@@ -176,8 +184,24 @@ class App:
         if rejected:
             self.events.put(f'已忽略 {rejected} 项：仅支持本地视频和音频文件，不支持文件夹。')
         return COPY if added or (paths and not rejected) else REFUSE_DROP
+    def select_output(self):
+        if self.busy: return
+        folder = filedialog.askdirectory(title='选择输出文件夹', parent=self.root)
+        if folder: self.output_dir.set(folder)
+    def prepare_output(self):
+        raw = self.output_dir.get().strip()
+        if not raw: raise ValueError('请选择输出文件夹。')
+        folder = Path(raw).expanduser().resolve()
+        folder.mkdir(parents=True, exist_ok=True)
+        # Confirm write access before starting a potentially long batch.
+        import tempfile
+        with tempfile.TemporaryFile(dir=folder): pass
+        return folder
     def open_output(self):
-        folder = BASE / '输出'; folder.mkdir(exist_ok=True); os.startfile(folder)
+        try:
+            os.startfile(self.prepare_output())
+        except (OSError, ValueError) as error:
+            self.events.put('无法打开输出文件夹：' + str(error))
     def scroll_files(self, event):
         if event.delta:
             self.progress_canvas.yview_scroll(-1 if event.delta > 0 else 1, 'units')
@@ -229,9 +253,14 @@ class App:
             if mode != '生成逐字稿' and (not math.isfinite(limit) or not 1 <= limit <= 100000): raise ValueError()
         except ValueError:
             self.events.put('最大体积请输入1至100000之间的数字。'); return
+        try:
+            output = self.prepare_output()
+        except (OSError, ValueError) as error:
+            self.events.put('输出文件夹不可用：' + str(error)); return
         device = 'cpu' if self.device.get() == '优先 CPU' else 'cuda'
         self.show_files()
         self.cancel.clear(); self.busy = True
+        self.output_entry.config(state='disabled'); self.output_choose.config(state='disabled')
         self.device_combo.config(state='disabled')
         self.run.config(state='disabled'); self.choose.config(state='disabled'); self.combo.config(state='disabled')
         self.mode_combo.config(state='disabled'); self.size_entry.config(state='disabled'); self.stop.config(state='normal')
@@ -258,10 +287,10 @@ class App:
                     report('开始：' + file)
                     if mode == '生成逐字稿':
                         transcribe(file, quality, report=report, device=device,
-                                   cancel=self.cancel, progress=progress)
+                                   cancel=self.cancel, progress=progress, output=output)
                     else:
                         compress(file, 'audio' if mode == '提取小体积音频' else 'video', limit,
-                                 report=report, cancel=self.cancel)
+                                 report=report, cancel=self.cancel, output=output)
                     progress(100, '已完成')
                     completed += 1
                 except Cancelled as error:
@@ -286,6 +315,7 @@ class App:
                 msg = self.events.get_nowait()
                 if msg is None:
                     self.busy = False
+                    self.output_entry.config(state='normal'); self.output_choose.config(state='normal')
                     self.device_combo.config(state='readonly')
                     self.run.config(state='normal'); self.choose.config(state='normal'); self.combo.config(state='readonly')
                     self.mode_combo.config(state='readonly'); self.size_entry.config(state='normal'); self.stop.config(state='disabled')
@@ -295,7 +325,10 @@ class App:
                 else:
                     self.log.insert('end', msg + '\n'); self.log.see('end')
         except queue.Empty: pass
-        self.root.after(200, self.poll)
+        self.poll_job = self.root.after(200, self.poll)
+    def on_destroy(self, event):
+        if event.widget == self.root and hasattr(self, 'poll_job'):
+            self.root.after_cancel(self.poll_job)
     def close(self):
         if self.busy:
             if messagebox.askyesno('正在处理', '停止当前任务？部分结果会保留。停止完成后可关闭窗口。'):
