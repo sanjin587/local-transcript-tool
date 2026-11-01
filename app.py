@@ -9,8 +9,10 @@ from pathlib import Path
 from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
+from tkinterdnd2 import TkinterDnD, DND_FILES, COPY, REFUSE_DROP
 from compress import compress, Cancelled
 
+MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.mp3', '.wav', '.m4a', '.aac', '.flac'}
 BASE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get('TRANSCRIPT_MODEL_CACHE', str(BASE / 'models' / 'hub'))).expanduser()
 DLL_HANDLES = []
@@ -91,7 +93,7 @@ def transcribe(source, quality='medium', output=None, report=print, device=None,
 
 class App:
     def __init__(self):
-        self.root = tk.Tk(); self.root.title('本地视频工具：压缩 / 音频 / 逐字稿'); self.root.geometry('980x780'); self.root.minsize(820, 650)
+        self.root = TkinterDnD.Tk(); self.dnd_enabled = True; self.root.title('本地视频工具：压缩 / 音频 / 逐字稿'); self.root.geometry('980x780'); self.root.minsize(820, 650)
         self.events = queue.Queue(); self.files = []; self.cancel = threading.Event(); self.busy = False
         self.file_progress = []
         self.root.protocol('WM_DELETE_WINDOW', self.close)
@@ -121,6 +123,10 @@ class App:
         ttk.Button(bar, text='打开输出文件夹', command=self.open_output).pack(side='left', padx=5)
         ttk.Label(self.root, text='音频适合口播保存；超长音频自动分段。压缩视频保留完整时长，目标越小，画质越低。').pack()
         ttk.Label(self.root, text='逐字稿模型：medium 优先质量 / small 优先速度 / base 粗稿；MB设置仅用于音频和视频压缩。').pack()
+        self.drop_zone = ttk.Label(self.root,
+            text='将视频 / 音频拖到这里添加（支持多个文件） · 本地处理，无需上传',
+            anchor='center', padding=12, relief='groove')
+        self.drop_zone.pack(fill='x', padx=15, pady=(8, 2))
         self.batch_status = tk.StringVar(value='请选择文件，每个文件的进度将在下方显示')
         ttk.Label(self.root, textvariable=self.batch_status).pack(anchor='w', padx=15, pady=(10, 3))
         progress_frame = ttk.Frame(self.root); progress_frame.pack(fill='x', padx=15)
@@ -133,7 +139,42 @@ class App:
         self.progress_rows.bind('<Configure>', lambda e: self.progress_canvas.configure(scrollregion=self.progress_canvas.bbox('all')))
         self.progress_canvas.bind('<Configure>', lambda e: self.progress_canvas.itemconfigure(window, width=e.width))
         self.log = tk.Text(self.root, wrap='word', height=8); self.log.pack(fill='both', expand=True, padx=15, pady=15)
+        for target in (self.root, self.drop_zone, self.progress_canvas):
+            target.drop_target_register(DND_FILES)
+            target.dnd_bind('<<Drop>>', self.on_drop)
         self.root.after(200, self.poll)
+    def on_drop(self, event):
+        if self.busy:
+            self.events.put('正在处理，请等本批完成或停止后再拖入文件。')
+            return REFUSE_DROP
+        try:
+            paths = self.root.tk.splitlist(event.data)
+        except tk.TclError:
+            self.events.put('无法读取拖入的文件，请使用“选择视频 / 音频”。')
+            return REFUSE_DROP
+        known = {os.path.normcase(str(Path(file).resolve())) for file in self.files}
+        added = []; rejected = 0
+        for raw in paths:
+            try:
+                path = Path(raw).resolve()
+                if not path.is_file() or path.suffix.lower() not in MEDIA_EXTENSIONS:
+                    rejected += 1
+                    continue
+            except (OSError, ValueError):
+                rejected += 1
+                continue
+            key = os.path.normcase(str(path))
+            if key not in known:
+                known.add(key); added.append(str(path))
+        if added:
+            self.files.extend(added)
+            self.show_files()
+            self.events.put(f'拖拽添加 {len(added)} 个文件，当前共 {len(self.files)} 个。')
+        elif not rejected:
+            self.events.put('拖入的文件已在列表中，无需重复添加。')
+        if rejected:
+            self.events.put(f'已忽略 {rejected} 项：仅支持本地视频和音频文件，不支持文件夹。')
+        return COPY if added or (paths and not rejected) else REFUSE_DROP
     def open_output(self):
         folder = BASE / '输出'; folder.mkdir(exist_ok=True); os.startfile(folder)
     def show_files(self):
