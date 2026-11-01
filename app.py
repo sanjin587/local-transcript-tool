@@ -130,10 +130,11 @@ class App:
         self.batch_status = tk.StringVar(value='请选择文件，每个文件的进度将在下方显示')
         ttk.Label(self.root, textvariable=self.batch_status).pack(anchor='w', padx=15, pady=(10, 3))
         progress_frame = ttk.Frame(self.root); progress_frame.pack(fill='x', padx=15)
-        self.progress_canvas = tk.Canvas(progress_frame, height=180, highlightthickness=0)
+        self.progress_canvas = tk.Canvas(progress_frame, height=280, highlightthickness=0)
         scroll = ttk.Scrollbar(progress_frame, orient='vertical', command=self.progress_canvas.yview)
         self.progress_canvas.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y'); self.progress_canvas.pack(side='left', fill='x', expand=True)
+        self.progress_canvas.bind('<MouseWheel>', self.scroll_files)
         self.progress_rows = ttk.Frame(self.progress_canvas)
         window = self.progress_canvas.create_window((0, 0), window=self.progress_rows, anchor='nw')
         self.progress_rows.bind('<Configure>', lambda e: self.progress_canvas.configure(scrollregion=self.progress_canvas.bbox('all')))
@@ -177,18 +178,27 @@ class App:
         return COPY if added or (paths and not rejected) else REFUSE_DROP
     def open_output(self):
         folder = BASE / '输出'; folder.mkdir(exist_ok=True); os.startfile(folder)
+    def scroll_files(self, event):
+        if event.delta:
+            self.progress_canvas.yview_scroll(-1 if event.delta > 0 else 1, 'units')
+        return 'break'
     def show_files(self):
         for row in self.file_progress: row['bar'].stop()
         for child in self.progress_rows.winfo_children(): child.destroy()
         self.file_progress = []
         for index, file in enumerate(self.files):
             row = ttk.Frame(self.progress_rows); row.pack(fill='x', pady=5, padx=3)
-            name = ttk.Label(row, text=f'{index + 1}. {Path(file).name}', width=32, wraplength=230)
-            name.pack(side='left', padx=(0, 8))
+            row.columnconfigure(0, weight=1)
+            name = ttk.Label(row, text=f'{index + 1}. {Path(file).name}', width=1, anchor='w')
+            name.grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 4))
+            row.bind('<Configure>', lambda e, label=name: label.configure(wraplength=max(100, e.width - 8)))
             bar = ttk.Progressbar(row, maximum=100, mode='determinate', length=200)
-            bar.pack(side='left', fill='x', expand=True)
+            bar.grid(row=1, column=0, sticky='ew')
             status = tk.StringVar(value='等待中')
-            ttk.Label(row, textvariable=status, width=40).pack(side='left', padx=8)
+            status_label = ttk.Label(row, textvariable=status, width=36, anchor='w')
+            status_label.grid(row=1, column=1, padx=(12, 0), sticky='w')
+            for widget in (row, name, bar, status_label):
+                widget.bind('<MouseWheel>', self.scroll_files)
             self.file_progress.append({'bar': bar, 'status': status, 'value': 0})
         self.batch_status.set(f'共 {len(self.files)} 个文件 · 顺序处理')
         self.progress_canvas.yview_moveto(0)
